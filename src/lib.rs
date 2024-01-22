@@ -153,13 +153,95 @@ mod tests {
         );
     }
 
-    // #[test]
-    // fn set_then_get_greeting() {
-    //     let mut contract = Contract::default();
-    //     contract.set_greeting("howdy".to_string());
-    //     assert_eq!(
-    //         contract.get_greeting(),
-    //         "howdy".to_string()
-    //     );
-    // }
+    // This could have more comprehensive coverage of edge cases :)
+    #[test]
+    fn everything_covered_by_sig() {
+        todo!("Find an elegant way to iterate over input arguments and modify them without hundreds of lines of code");
+        // let server_response = serde_json::from_str::<Value>(
+        //     "{\"values\":{\"circuit_id\":\"0x729d660e1c02e4e419745e617d643f897a538673ccf1051e093bbfa58b0a120b\",\"sbt_reciever\":\"testaccount.near\",\"expiration\":\"0xeb22926a\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x10618764ddaf4a294979b4987e1236eeb5b279a798810ce53b4acedb1e1c0d79\",\"public_values\":[\"0xeb22926a\",\"0x746573746163636f756e742e6e656172\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x10618764ddaf4a294979b4987e1236eeb5b279a798810ce53b4acedb1e1c0d79\",\"0x2a0ec27e1e1ba005e10ae32cba78d8e922460f26dc28350056a6a71ed108fab7\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x415302ac36922c692d7f80e2c7a9d812b5fc55a4050a433e8c1ee6510457c46c7c3b47352834bef57ae3f325088be3f31cf5a861150660ccf7f1b4a1827f8e00\"}"
+        // ).expect("Invalid JSON");
+        // let circuit_id = hex::decode(server_response["values"]["circuit_id"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap();
+        // let sbt_reciever = server_response["values"]["sbt_reciever"].as_str().unwrap().to_string();
+        // let expiry = u64::from_str_radix(&server_response["values"]["expiration"].as_str().unwrap().replace("0x", ""), 16).unwrap();
+        // let fee = u128::from_str_radix(&server_response["values"]["custom_fee"].as_str().unwrap().replace("0x", ""), 16).unwrap();
+        // let nullifier = hex::decode(server_response["values"]["nullifier"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap();
+        // let pub_vals = server_response["values"]["public_values"].as_array().expect("Invalid public_values").iter().map(|x| {
+        //     let mut bytes = [0u8; 32];
+        //     x.as_str().unwrap().parse::<U256>().unwrap().to_big_endian(&mut bytes);
+        //     bytes
+        // }).collect();
+        // let sig = hex::decode(server_response["sig"].as_str().unwrap().replace("0x", "")).expect("Invalid hex for signature");
+
+        // let mut contract = Contract::default();
+        // I really don't think there's a way to do this in rust without hundreds of lines of code
+        // for item in [circuit_id,
+        //     sbt_reciever,
+        //     expiry,
+        //     fee,
+        //     nullifier,
+        //     pub_vals,
+        //     sig] 
+        //     {
+        //         ... modify one value
+        //         assert_panic!(
+        //             contract.set_sbt(
+        //                 circuit_id,
+        //                 sbt_reciever,
+        //                 expiry,
+        //                 fee,
+        //                 nullifier,
+        //                 pub_vals,
+        //                 sig
+        //             ),
+        //             ()
+        //         );
+        //     }
+        
+    }
+
+    #[test]
+    #[should_panic(expected = "This has already been proven")]
+    fn nullifier_reuse() {
+        let server_response = serde_json::from_str::<Value>(
+            "{\"values\":{\"circuit_id\":\"0x729d660e1c02e4e419745e617d643f897a538673ccf1051e093bbfa58b0a120b\",\"sbt_reciever\":\"testaccount.near\",\"expiration\":\"0xeb22926a\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x10618764ddaf4a294979b4987e1236eeb5b279a798810ce53b4acedb1e1c0d79\",\"public_values\":[\"0xeb22926a\",\"0x746573746163636f756e742e6e656172\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x10618764ddaf4a294979b4987e1236eeb5b279a798810ce53b4acedb1e1c0d79\",\"0x2a0ec27e1e1ba005e10ae32cba78d8e922460f26dc28350056a6a71ed108fab7\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x415302ac36922c692d7f80e2c7a9d812b5fc55a4050a433e8c1ee6510457c46c7c3b47352834bef57ae3f325088be3f31cf5a861150660ccf7f1b4a1827f8e00\"}"
+        ).expect("Invalid JSON");
+        let circuit_id = hex::decode(server_response["values"]["circuit_id"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap();
+        let sbt_reciever = server_response["values"]["sbt_reciever"].as_str().unwrap().to_string();
+        let expiry = u64::from_str_radix(&server_response["values"]["expiration"].as_str().unwrap().replace("0x", ""), 16).unwrap();
+        let fee = u128::from_str_radix(&server_response["values"]["custom_fee"].as_str().unwrap().replace("0x", ""), 16).unwrap();
+        let nullifier = hex::decode(server_response["values"]["nullifier"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap();
+        let pub_vals = server_response["values"]["public_values"].as_array().expect("Invalid public_values").iter().map(|x| {
+            let mut bytes = [0u8; 32];
+            x.as_str().unwrap().parse::<U256>().unwrap().to_big_endian(&mut bytes);
+            bytes
+        }).collect::<Vec<FrBytes>>();
+        let sig = hex::decode(server_response["sig"].as_str().unwrap().replace("0x", "")).expect("Invalid hex for signature");
+
+        let mut contract = Contract::default();
+
+        assert_eq!(
+            contract.set_sbt(
+                circuit_id,
+                sbt_reciever.clone(),
+                expiry,
+                fee,
+                nullifier,
+                pub_vals.clone(),
+                sig.clone()
+            ),
+            ()
+        );
+
+        // This should panic and be caught by #[should_panic(expected = "This has already been proven")]
+        contract.set_sbt(
+            circuit_id,
+            sbt_reciever,
+            expiry,
+            fee,
+            nullifier,
+            pub_vals,
+            sig
+        );
+
+    }
 }
