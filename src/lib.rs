@@ -33,7 +33,7 @@ impl Default for Contract {
         Self { 
             sbt_owners: LookupMap::new(b"sbt_owners".to_vec()), 
             used_nullifiers: LookupSet::new(b"used_nullifiers".to_vec()), 
-            verifier_pubkey: [0; PUBLIC_KEY_LENGTH] 
+            verifier_pubkey: hex::decode("ec1169505a31c34288953b77e707ff1c5390d1f9b63150a17afb7fb44531b11c").expect("Invalid hex for pubkey").try_into().expect("Invalid length for pubkey")
         }
     }
 }
@@ -41,7 +41,14 @@ impl Default for Contract {
 // Implement the contract structure
 #[near_bindgen]
 impl Contract {
-    // Public method - accepts a greeting, such as "howdy", and records it
+    /// `circuit_id` is the ID of the circuit and also the SBT
+    /// `proof_ipfs_cid` is a currently unused parameter set to the empty string. It can be used to check the proof oneself instead of trusting the verifier.
+    /// `sbt_owner` is the address the verifier specifies to recieve the SBT. 
+    /// `expiry` is an expiration date the verifier can set.
+    /// `custom_fee` is a fee the verifier can set that the user must pay to submit the transaction.
+    /// `nullifier` is an optional field (set to 0 if unused) which prevents the same ID from being used for >1 proof. Again this is given by the verifier but can be checked if the Verifier posts the proof to IPFS
+    /// `public_values` are the proofs' public inputs and outputs. They are stored with the SBT. Again, these can be checked if the proof is put in IPFS
+    /// To migrate SBT owners from the previous contract, the initially centralized trusted verifier can simply add them one-by-one
     pub fn set_sbt(
         &mut self,
         circuit_id: CircuitId,
@@ -58,9 +65,12 @@ impl Contract {
         
         // Require the signature
         let msg = (&[&circuit_id, sbt_owner.as_bytes(), &expiry.to_be_bytes(), &custom_fee.to_be_bytes(), &nullifier, &public_values.concat()].concat());
+
+
         let sig = Signature::from_bytes(
             &signature.try_into().expect("Invalid length for signature")
         );
+        
         let pubkey = VerifyingKey::from_bytes(&self.verifier_pubkey).expect("Invalid public key");
         require!(pubkey.verify(&msg, &sig).is_ok(), "The Verifier did not sign the provided arguments in the provided order");
 
@@ -77,14 +87,13 @@ impl Contract {
                 circuit_id
             ), 
             &SBT { expiry, public_values });
-
-        // log_str(&format!("Log: {circuit_id}"));
     }
 
 
     // IMPORTANT: make sure you check the public values such as actionId from this. Someone can forge a proof if you don't check the public values
     /// e.g., by using a different issuer or actionId
-    pub fn get_sbt(&self, owner: AccountId, circuit_id: CircuitId) -> SBT {
+    pub fn get_sbt(&self, owner: String, circuit_id: CircuitId) -> SBT {
+        let owner = AccountId::from_str(&owner).expect("Invalid account ID");
         let sbt = self.sbt_owners.get(&(owner, circuit_id)).expect("SBT does not exist");
         require!(sbt.expiry >= block_timestamp(), "SBT is expired");
         sbt
@@ -97,25 +106,60 @@ impl Contract {
  */
 #[cfg(test)]
 mod tests {
+    use ethers_core::types::U256;
+    use serde_json::Value;
+
     use super::*;
 
     #[test]
-    fn get_default_greeting() {
-        let contract = Contract::default();
-        // this test did not call set_greeting so should return the default "Hello" greeting
+    fn get_set_sbt() {
+        let mut contract = Contract::default();
+        // Assert getting a non-existent SBT causes panic
+        assert!(
+            std::panic::catch_unwind(||
+                contract.get_sbt(
+                    "testaccount.near".to_string(),
+                    hex::decode("729d660e1c02e4e419745e617d643f897a538673ccf1051e093bbfa58b0a120b").unwrap().try_into().unwrap()
+                )
+            ).is_err()
+        );
+
+        let server_response = serde_json::from_str::<Value>(
+            "{\"values\":{\"circuit_id\":\"0x729d660e1c02e4e419745e617d643f897a538673ccf1051e093bbfa58b0a120b\",\"sbt_reciever\":\"testaccount.near\",\"expiration\":\"0xeb22926a\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x10618764ddaf4a294979b4987e1236eeb5b279a798810ce53b4acedb1e1c0d79\",\"public_values\":[\"0xeb22926a\",\"0x746573746163636f756e742e6e656172\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x10618764ddaf4a294979b4987e1236eeb5b279a798810ce53b4acedb1e1c0d79\",\"0x2a0ec27e1e1ba005e10ae32cba78d8e922460f26dc28350056a6a71ed108fab7\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x415302ac36922c692d7f80e2c7a9d812b5fc55a4050a433e8c1ee6510457c46c7c3b47352834bef57ae3f325088be3f31cf5a861150660ccf7f1b4a1827f8e00\"}"
+        ).expect("Invalid JSON");
         assert_eq!(
-            contract.get_greeting(),
-            "Hello".to_string()
+            contract.set_sbt(
+                hex::decode(server_response["values"]["circuit_id"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap(),
+                // server_response["values"]["proof_ipfs_cid"].as_str().expect("Invalid proof_ipfs_cid").to_string(),
+                server_response["values"]["sbt_reciever"].as_str().unwrap().to_string(),
+                u64::from_str_radix(&server_response["values"]["expiration"].as_str().unwrap().replace("0x", ""), 16).unwrap(),
+                u128::from_str_radix(&server_response["values"]["custom_fee"].as_str().unwrap().replace("0x", ""), 16).unwrap(),
+                hex::decode(server_response["values"]["nullifier"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap(),
+                server_response["values"]["public_values"].as_array().expect("Invalid public_values").iter().map(|x| {
+                    let mut bytes = [0u8; 32];
+                    x.as_str().unwrap().parse::<U256>().unwrap().to_big_endian(&mut bytes);
+                    bytes
+                }).collect(),
+                hex::decode(server_response["sig"].as_str().unwrap().replace("0x", "")).expect("Invalid hex for signature")
+            ),
+            ()
+        );
+
+        assert_ne!(contract.get_sbt(
+                "testaccount.near".to_string(),
+                hex::decode("729d660e1c02e4e419745e617d643f897a538673ccf1051e093bbfa58b0a120b").unwrap().try_into().unwrap()
+            ).expiry, 
+            0
         );
     }
 
-    #[test]
-    fn set_then_get_greeting() {
-        let mut contract = Contract::default();
-        contract.set_greeting("howdy".to_string());
-        assert_eq!(
-            contract.get_greeting(),
-            "howdy".to_string()
-        );
-    }
+    // #[test]
+    // fn set_then_get_greeting() {
+    //     let mut contract = Contract::default();
+    //     contract.set_greeting("howdy".to_string());
+    //     assert_eq!(
+    //         contract.get_greeting(),
+    //         "howdy".to_string()
+    //     );
+    // }
 }
