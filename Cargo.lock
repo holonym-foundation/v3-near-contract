@@ -1676,18 +1676,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
 
 [[package]]
-name = "hello_near"
-version = "1.0.0"
-dependencies = [
- "ed25519-dalek 2.1.0",
- "ethers-core",
- "hex",
- "near-sdk",
- "serde_json",
- "uint",
-]
-
-[[package]]
 name = "hermit-abi"
 version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1718,6 +1706,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
 dependencies = [
  "digest 0.10.7",
+]
+
+[[package]]
+name = "holonear"
+version = "1.0.0"
+dependencies = [
+ "ed25519-dalek 2.1.0",
+ "ethers-core",
+ "hex",
+ "near-sdk",
+ "serde",
+ "serde_json",
+ "uint",
 ]
 
 [[package]]

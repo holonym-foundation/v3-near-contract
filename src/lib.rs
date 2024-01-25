@@ -1,17 +1,17 @@
 use std::str::FromStr;
 
-// Find all our documentation at https://docs.near.org
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::{LookupMap, Vector, LookupSet};
-use near_sdk::env::{log_str, block_timestamp, attached_deposit, keccak256};
+use near_sdk::collections::{LookupMap, LookupSet};
+use near_sdk::env::{block_timestamp, attached_deposit};
 use near_sdk::{near_bindgen, AccountId, require};
-use ed25519_dalek::{PUBLIC_KEY_LENGTH, SIGNATURE_LENGTH, Verifier, VerifyingKey, Signature};
+use serde::Serialize;
+use ed25519_dalek::{PUBLIC_KEY_LENGTH, Verifier, VerifyingKey, Signature};
 
 /// Byte representation of an element in the finite field of the 254-bit BN254 prime
 pub type FrBytes = [u8; 32];
 pub type CircuitId = [u8; 32];
 
-#[derive(BorshDeserialize, BorshSerialize)]
+#[derive(Serialize, BorshDeserialize, BorshSerialize)]
 pub struct SBT {
     expiry: u64,
     public_values: Vec<FrBytes>
@@ -64,7 +64,7 @@ impl Contract {
         require!(attached_deposit() == custom_fee, "Attached deposit must be equal to fee");
         
         // Require the signature
-        let msg = (&[&circuit_id, sbt_owner.as_bytes(), &expiry.to_be_bytes(), &custom_fee.to_be_bytes(), &nullifier, &public_values.concat()].concat());
+        let msg = &[&circuit_id, sbt_owner.as_bytes(), &expiry.to_be_bytes(), &custom_fee.to_be_bytes(), &nullifier, &public_values.concat()].concat();
 
 
         let sig = Signature::from_bytes(
@@ -95,15 +95,12 @@ impl Contract {
     pub fn get_sbt(&self, owner: String, circuit_id: CircuitId) -> SBT {
         let owner = AccountId::from_str(&owner).expect("Invalid account ID");
         let sbt = self.sbt_owners.get(&(owner, circuit_id)).expect("SBT does not exist");
-        require!(sbt.expiry >= block_timestamp(), "SBT is expired");
+        require!(sbt.expiry >= block_timestamp() / 1_000_000_000, "SBT is expired");
         sbt
     }
 }
 
-/*
- * The rest of this file holds the inline tests for the code above
- * Learn more about Rust tests: https://doc.rust-lang.org/book/ch11-01-writing-tests.html
- */
+
 #[cfg(test)]
 mod tests {
     use ethers_core::types::U256;
