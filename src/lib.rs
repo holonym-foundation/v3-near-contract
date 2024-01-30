@@ -105,24 +105,36 @@ impl Contract {
 mod tests {
     use ethers_core::types::U256;
     use serde_json::Value;
-
     use super::*;
+    use near_sdk::test_utils::VMContextBuilder;
+    use near_sdk::{testing_env, VMContext};
+
+    fn get_context(timestamp: u64) -> VMContext {
+        VMContextBuilder::new()
+            .signer_account_id("bob_near".parse().unwrap())
+            .block_timestamp(timestamp)
+            .is_view(false)
+            .build()
+    }
 
     #[test]
     fn get_set_sbt() {
+        let context = get_context(1706572582000000000);
+        testing_env!(context);
+
         let mut contract = Contract::default();
         // Assert getting a non-existent SBT causes panic
         assert!(
             std::panic::catch_unwind(||
                 contract.get_sbt(
-                    "testaccount.near".to_string(),
-                    hex::decode("729d660e1c02e4e419745e617d643f897a538673ccf1051e093bbfa58b0a120b").unwrap().try_into().unwrap()
+                    "testaccount.testnet".to_string(),
+                    hex::decode("bce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495").unwrap().try_into().unwrap()
                 )
             ).is_err()
         );
 
         let server_response = serde_json::from_str::<Value>(
-            "{\"values\":{\"circuit_id\":\"0x729d660e1c02e4e419745e617d643f897a538673ccf1051e093bbfa58b0a120b\",\"sbt_reciever\":\"testaccount.near\",\"expiration\":\"0xeb22926a\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x10618764ddaf4a294979b4987e1236eeb5b279a798810ce53b4acedb1e1c0d79\",\"public_values\":[\"0xeb22926a\",\"0x746573746163636f756e742e6e656172\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x10618764ddaf4a294979b4987e1236eeb5b279a798810ce53b4acedb1e1c0d79\",\"0x2a0ec27e1e1ba005e10ae32cba78d8e922460f26dc28350056a6a71ed108fab7\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x415302ac36922c692d7f80e2c7a9d812b5fc55a4050a433e8c1ee6510457c46c7c3b47352834bef57ae3f325088be3f31cf5a861150660ccf7f1b4a1827f8e00\"}"
+            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"testaccount.testnet\",\"expiration\":\"0x6773e0bb\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"public_values\":[\"0x6773e0bb\",\"0x746573746163636f756e742e746573746e6574\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"0x2cf7ee166e16db45608361744b945755faafc389d377594c50232105b5b2f29f\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x9d2554a7337e3c1b5a41c2fa13db6799bb8d01187d44249a6099d61a9d759a63cc529791a7a41b99b95ac717cd7e73667a52e66177b5c82a1f168764ea4b650e\"}"
         ).expect("Invalid JSON");
         assert_eq!(
             contract.set_sbt(
@@ -143,8 +155,8 @@ mod tests {
         );
 
         assert_ne!(contract.get_sbt(
-                "testaccount.near".to_string(),
-                hex::decode("729d660e1c02e4e419745e617d643f897a538673ccf1051e093bbfa58b0a120b").unwrap().try_into().unwrap()
+                "testaccount.testnet".to_string(),
+                hex::decode("bce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495").unwrap().try_into().unwrap()
             ).expiry, 
             0
         );
@@ -199,8 +211,11 @@ mod tests {
     #[test]
     #[should_panic(expected = "This has already been proven")]
     fn nullifier_reuse() {
+        let context = get_context(1706572582000000000);
+        testing_env!(context);
+
         let server_response = serde_json::from_str::<Value>(
-            "{\"values\":{\"circuit_id\":\"0x729d660e1c02e4e419745e617d643f897a538673ccf1051e093bbfa58b0a120b\",\"sbt_reciever\":\"testaccount.near\",\"expiration\":\"0xeb22926a\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x10618764ddaf4a294979b4987e1236eeb5b279a798810ce53b4acedb1e1c0d79\",\"public_values\":[\"0xeb22926a\",\"0x746573746163636f756e742e6e656172\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x10618764ddaf4a294979b4987e1236eeb5b279a798810ce53b4acedb1e1c0d79\",\"0x2a0ec27e1e1ba005e10ae32cba78d8e922460f26dc28350056a6a71ed108fab7\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x415302ac36922c692d7f80e2c7a9d812b5fc55a4050a433e8c1ee6510457c46c7c3b47352834bef57ae3f325088be3f31cf5a861150660ccf7f1b4a1827f8e00\"}"
+            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"testaccount.testnet\",\"expiration\":\"0x6773e0bb\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"public_values\":[\"0x6773e0bb\",\"0x746573746163636f756e742e746573746e6574\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"0x2cf7ee166e16db45608361744b945755faafc389d377594c50232105b5b2f29f\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x9d2554a7337e3c1b5a41c2fa13db6799bb8d01187d44249a6099d61a9d759a63cc529791a7a41b99b95ac717cd7e73667a52e66177b5c82a1f168764ea4b650e\"}"
         ).expect("Invalid JSON");
         let circuit_id = hex::decode(server_response["values"]["circuit_id"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap();
         let sbt_reciever = server_response["values"]["sbt_reciever"].as_str().unwrap().to_string();
@@ -240,5 +255,58 @@ mod tests {
             sig
         );
 
+    }
+
+    #[test]
+    #[should_panic(expected = "SBT is expired")]
+    fn expiration() {
+        let context = get_context(1706572582000000000 + 365*24*60*60*1_000_000_000);
+        testing_env!(context);
+        let server_response = serde_json::from_str::<Value>(
+            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"testaccount.testnet\",\"expiration\":\"0x6773e0bb\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"public_values\":[\"0x6773e0bb\",\"0x746573746163636f756e742e746573746e6574\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"0x2cf7ee166e16db45608361744b945755faafc389d377594c50232105b5b2f29f\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x9d2554a7337e3c1b5a41c2fa13db6799bb8d01187d44249a6099d61a9d759a63cc529791a7a41b99b95ac717cd7e73667a52e66177b5c82a1f168764ea4b650e\"}"
+        ).expect("Invalid JSON");
+        let circuit_id = hex::decode(server_response["values"]["circuit_id"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap();
+        let sbt_reciever = server_response["values"]["sbt_reciever"].as_str().unwrap().to_string();
+        let expiry = u64::from_str_radix(&server_response["values"]["expiration"].as_str().unwrap().replace("0x", ""), 16).unwrap();
+        let fee = u128::from_str_radix(&server_response["values"]["custom_fee"].as_str().unwrap().replace("0x", ""), 16).unwrap();
+        let nullifier = hex::decode(server_response["values"]["nullifier"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap();
+        let pub_vals = server_response["values"]["public_values"].as_array().expect("Invalid public_values").iter().map(|x| {
+            let mut bytes = [0u8; 32];
+            x.as_str().unwrap().parse::<U256>().unwrap().to_big_endian(&mut bytes);
+            bytes
+        }).collect::<Vec<FrBytes>>();
+        let sig = hex::decode(server_response["sig"].as_str().unwrap().replace("0x", "")).expect("Invalid hex for signature");
+
+        let mut contract = Contract::default();
+
+        assert_eq!(
+            contract.set_sbt(
+                circuit_id,
+                sbt_reciever.clone(),
+                expiry,
+                fee,
+                nullifier,
+                pub_vals.clone(),
+                sig.clone()
+            ),
+            ()
+        );
+
+        // This should panic and be caught by should_panic macro:
+        contract.get_sbt(
+            "testaccount.testnet".to_string(),
+            hex::decode("bce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495").unwrap().try_into().unwrap()
+        );
+
+        // // This should panic and be caught by should_panic macro:
+        // contract.set_sbt(
+        //     circuit_id,
+        //     sbt_reciever,
+        //     expiry,
+        //     fee,
+        //     nullifier,
+        //     pub_vals,
+        //     sig
+        // );
     }
 }
