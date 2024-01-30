@@ -33,7 +33,7 @@ impl Default for Contract {
         Self { 
             sbt_owners: LookupMap::new(b"sbt_owners".to_vec()), 
             used_nullifiers: LookupSet::new(b"used_nullifiers".to_vec()), 
-            verifier_pubkey: hex::decode("ec1169505a31c34288953b77e707ff1c5390d1f9b63150a17afb7fb44531b11c").expect("Invalid hex for pubkey").try_into().expect("Invalid length for pubkey")
+            verifier_pubkey: hex::decode("8abb54a589fd33af1e42617939bcf58f30674c20d9e1a8342e6abe078280a70c").expect("Invalid hex for pubkey").try_into().expect("Invalid length for pubkey")
         }
     }
 }
