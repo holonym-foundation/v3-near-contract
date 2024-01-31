@@ -6,7 +6,6 @@ use std::{env, fs};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wasm_arg: &str = &(env::args().nth(1).unwrap());
     let wasm_filepath = fs::canonicalize(env::current_dir()?.join(wasm_arg))?;
- 
     let worker = near_workspaces::sandbox().await?;
     let wasm = std::fs::read(wasm_filepath)?;
     let contract = worker.dev_deploy(&wasm).await?;
