@@ -11,7 +11,7 @@ use ed25519_dalek::{PUBLIC_KEY_LENGTH, Verifier, VerifyingKey, Signature};
 pub type FrBytes = [u8; 32];
 pub type CircuitId = [u8; 32];
 
-#[derive(Serialize, BorshDeserialize, BorshSerialize)]
+#[derive(Serialize, PartialEq, Debug, BorshDeserialize, BorshSerialize)]
 pub struct SBT {
     expiry: u64,
     public_values: Vec<FrBytes>
@@ -22,8 +22,13 @@ pub struct SBT {
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct Contract {
+    /// The SBTs are stored in a map with their owner and circuit ID as the key
     pub sbt_owners: LookupMap<(AccountId, CircuitId), SBT>,
+    /// In situations where the AccountId or CircuitId are not known, a used nullifier can be looked up to find the account and circuit ID it was used with
+    pub nullifiers_lookup: LookupMap<FrBytes, (AccountId, CircuitId)>,
+    /// This set keeps track of which nullifiers have been used so they cannot be used again
     pub used_nullifiers: LookupSet<FrBytes>,
+    /// The public key of the semi-trusted entity who can verify the proofs off-chain to save gas for expensive ZKP verification
     pub verifier_pubkey: [u8; PUBLIC_KEY_LENGTH]
 }
 
@@ -33,7 +38,8 @@ impl Default for Contract {
         Self { 
             sbt_owners: LookupMap::new(b"sbt_owners".to_vec()), 
             used_nullifiers: LookupSet::new(b"used_nullifiers".to_vec()), 
-            verifier_pubkey: hex::decode("8abb54a589fd33af1e42617939bcf58f30674c20d9e1a8342e6abe078280a70c").expect("Invalid hex for pubkey").try_into().expect("Invalid length for pubkey")
+            nullifiers_lookup: LookupMap::new(b"nullifiers_lookup".to_vec()),
+            verifier_pubkey: hex::decode("8abb54a589fd33af1e42617939bcf58f30674c20d9e1a8342e6abe078280a70c").expect("Invalid hex for pubkey").try_into().expect("Invalid length for pubkey") // Testing value: ec1169505a31c34288953b77e707ff1c5390d1f9b63150a17afb7fb44531b11c. Production value: 8abb54a589fd33af1e42617939bcf58f30674c20d9e1a8342e6abe078280a70c
         }
     }
 }
@@ -81,22 +87,35 @@ impl Contract {
         }
 
         // Store the SBT
+        let account_id = AccountId::from_str(&sbt_owner).expect("Invalid account ID");
         self.sbt_owners.insert(&
-            (
-                AccountId::from_str(&sbt_owner).expect("Invalid account ID"), 
-                circuit_id
-            ), 
-            &SBT { expiry, public_values });
+            (account_id.clone(), circuit_id), 
+            &SBT { expiry, public_values }
+        );
+        self.nullifiers_lookup.insert(&
+            nullifier,
+            &(account_id, circuit_id)
+        );
     }
 
+    fn _get_sbt(&self, owner: AccountId, circuit_id: CircuitId) -> SBT{
+        let sbt = self.sbt_owners.get(&(owner, circuit_id)).expect("SBT does not exist");
+        require!(sbt.expiry >= block_timestamp() / 1_000_000_000, "SBT is expired");
+        sbt
+    }
 
     // IMPORTANT: make sure you check the public values such as actionId from this. Someone can forge a proof if you don't check the public values
     /// e.g., by using a different issuer or actionId
     pub fn get_sbt(&self, owner: String, circuit_id: CircuitId) -> SBT {
         let owner = AccountId::from_str(&owner).expect("Invalid account ID");
-        let sbt = self.sbt_owners.get(&(owner, circuit_id)).expect("SBT does not exist");
-        require!(sbt.expiry >= block_timestamp() / 1_000_000_000, "SBT is expired");
-        sbt
+        self._get_sbt(owner, circuit_id)
+    }
+
+     // IMPORTANT: make sure you check the public values such as actionId from this. Someone can forge a proof if you don't check the public values
+    /// e.g., by using a different issuer or actionId
+    pub fn get_sbt_by_nullifier(&self, nullifier: FrBytes) -> SBT {
+        let (account_id, circuit_id) = self.nullifiers_lookup.get(&nullifier).expect("Nullifier could not be found");
+        self._get_sbt(account_id, circuit_id)
     }
 }
 
@@ -308,5 +327,48 @@ mod tests {
         //     pub_vals,
         //     sig
         // );
+    }
+
+    #[test]
+    #[should_panic(expected = "Nullifier could not be found")]
+    fn nullifier_mapping() {
+        let server_response = serde_json::from_str::<Value>(
+            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"testaccount.testnet\",\"expiration\":\"0x6773e0bb\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"public_values\":[\"0x6773e0bb\",\"0x746573746163636f756e742e746573746e6574\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"0x2cf7ee166e16db45608361744b945755faafc389d377594c50232105b5b2f29f\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x9d2554a7337e3c1b5a41c2fa13db6799bb8d01187d44249a6099d61a9d759a63cc529791a7a41b99b95ac717cd7e73667a52e66177b5c82a1f168764ea4b650e\"}"
+        ).expect("Invalid JSON");
+        let circuit_id = hex::decode(server_response["values"]["circuit_id"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap();
+        let sbt_reciever = server_response["values"]["sbt_reciever"].as_str().unwrap().to_string();
+        let expiry = u64::from_str_radix(&server_response["values"]["expiration"].as_str().unwrap().replace("0x", ""), 16).unwrap();
+        let fee = u128::from_str_radix(&server_response["values"]["custom_fee"].as_str().unwrap().replace("0x", ""), 16).unwrap();
+        let nullifier = hex::decode(server_response["values"]["nullifier"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap();
+        let pub_vals = server_response["values"]["public_values"].as_array().expect("Invalid public_values").iter().map(|x| {
+            let mut bytes = [0u8; 32];
+            x.as_str().unwrap().parse::<U256>().unwrap().to_big_endian(&mut bytes);
+            bytes
+        }).collect::<Vec<FrBytes>>();
+        let sig = hex::decode(server_response["sig"].as_str().unwrap().replace("0x", "")).expect("Invalid hex for signature");
+        
+        let mut contract = Contract::default();
+        
+        assert_eq!(
+            contract.set_sbt(
+                circuit_id,
+                sbt_reciever.clone(),
+                expiry,
+                fee,
+                nullifier,
+                pub_vals.clone(),
+                sig.clone()
+            ),
+            ()
+        );
+
+        // get_sbt_by_nullifier should have the same result as get_sbt
+        assert_eq!(
+            contract.get_sbt_by_nullifier(nullifier),
+            contract.get_sbt(sbt_reciever, circuit_id)
+        );
+
+        // Should fail for an unused nullifier
+        contract.get_sbt_by_nullifier([42; 32]);
     }
 }
