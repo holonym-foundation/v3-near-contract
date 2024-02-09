@@ -1,16 +1,33 @@
 use std::str::FromStr;
 
+use ethers_core::k256::sha2::{Sha512, Digest};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, LookupSet};
 use near_sdk::env::{block_timestamp, attached_deposit};
 use near_sdk::{near_bindgen, AccountId, require};
 use serde::Serialize;
 use ed25519_dalek::{PUBLIC_KEY_LENGTH, Verifier, VerifyingKey, Signature};
-
+use num_bigint::BigUint;
+use hex_literal::hex;
 /// Byte representation of an element in the finite field of the 254-bit BN254 prime
 pub type FrBytes = [u8; 32];
 pub type CircuitId = [u8; 32];
 
+/// Commitment to an account id that can fit in a single field element. The String represents the field element in hex
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct AccountCommitment(pub String);
+impl AccountCommitment {
+    /// Hashes to a field element
+    pub fn from_account_id(account_id: &AccountId) -> Self {
+        let mut h = Sha512::new();
+        h.update(account_id.as_bytes());
+        let numeric = BigUint::from_bytes_be(&h.finalize());
+        // Could be more efficient as lazy_static but I'm unsure how well lazy_static works with Near so this seems safer. Gas is not an issue:
+        let modulus = BigUint::from_bytes_be(&hex!("30644E72E131A029B85045B68181585D2833E84879B9709143E1F593F0000001"));
+
+        Self("0x".to_string() + &(numeric % modulus).to_str_radix(16))
+    }
+}
 #[derive(Serialize, PartialEq, Debug, BorshDeserialize, BorshSerialize)]
 pub struct SBT {
     expiry: u64,
@@ -23,9 +40,9 @@ pub struct SBT {
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct Contract {
     /// The SBTs are stored in a map with their owner and circuit ID as the key
-    pub sbt_owners: LookupMap<(AccountId, CircuitId), SBT>,
+    pub sbt_owners: LookupMap<(AccountCommitment, CircuitId), SBT>,
     /// In situations where the AccountId or CircuitId are not known, a used nullifier can be looked up to find the account and circuit ID it was used with
-    pub nullifiers_lookup: LookupMap<FrBytes, (AccountId, CircuitId)>,
+    pub nullifiers_lookup: LookupMap<FrBytes, (AccountCommitment, CircuitId)>,
     /// This set keeps track of which nullifiers have been used so they cannot be used again
     pub used_nullifiers: LookupSet<FrBytes>,
     /// The public key of the semi-trusted entity who can verify the proofs off-chain to save gas for expensive ZKP verification
@@ -39,7 +56,7 @@ impl Default for Contract {
             sbt_owners: LookupMap::new(b"sbt_owners".to_vec()), 
             used_nullifiers: LookupSet::new(b"used_nullifiers".to_vec()), 
             nullifiers_lookup: LookupMap::new(b"nullifiers_lookup".to_vec()),
-            verifier_pubkey: hex::decode("8abb54a589fd33af1e42617939bcf58f30674c20d9e1a8342e6abe078280a70c").expect("Invalid hex for pubkey").try_into().expect("Invalid length for pubkey") // Testing value: ec1169505a31c34288953b77e707ff1c5390d1f9b63150a17afb7fb44531b11c. Production value: 8abb54a589fd33af1e42617939bcf58f30674c20d9e1a8342e6abe078280a70c
+            verifier_pubkey: hex::decode("ec1169505a31c34288953b77e707ff1c5390d1f9b63150a17afb7fb44531b11c").expect("Invalid hex for pubkey").try_into().expect("Invalid length for pubkey") // Testing value: ec1169505a31c34288953b77e707ff1c5390d1f9b63150a17afb7fb44531b11c. Production value: 8abb54a589fd33af1e42617939bcf58f30674c20d9e1a8342e6abe078280a70c
         }
     }
 }
@@ -59,7 +76,7 @@ impl Contract {
         &mut self,
         circuit_id: CircuitId,
         // proof_ipfs_cid: String,
-        sbt_owner: String,
+        sbt_owner_commitment: String,
         expiry: u64,
         custom_fee: u128,
         nullifier: FrBytes,
@@ -70,7 +87,7 @@ impl Contract {
         require!(attached_deposit() == custom_fee, "Attached deposit must be equal to fee");
         
         // Require the signature
-        let msg = &[&circuit_id, sbt_owner.as_bytes(), &expiry.to_be_bytes(), &custom_fee.to_be_bytes(), &nullifier, &public_values.concat()].concat();
+        let msg = &[&circuit_id, sbt_owner_commitment.as_bytes(), &expiry.to_be_bytes(), &custom_fee.to_be_bytes(), &nullifier, &public_values.concat()].concat();
 
 
         let sig = Signature::from_bytes(
@@ -87,18 +104,18 @@ impl Contract {
         }
 
         // Store the SBT
-        let account_id = AccountId::from_str(&sbt_owner).expect("Invalid account ID");
+        // let account_id = AccountId::from_str(&sbt_owner).expect("Invalid account ID");
         self.sbt_owners.insert(&
-            (account_id.clone(), circuit_id), 
+            (AccountCommitment(sbt_owner_commitment.clone()), circuit_id), 
             &SBT { expiry, public_values }
         );
         self.nullifiers_lookup.insert(&
             nullifier,
-            &(account_id, circuit_id)
+            &(AccountCommitment(sbt_owner_commitment), circuit_id)
         );
     }
 
-    fn _get_sbt(&self, owner: AccountId, circuit_id: CircuitId) -> SBT{
+    fn _get_sbt(&self, owner: AccountCommitment, circuit_id: CircuitId) -> SBT {
         let sbt = self.sbt_owners.get(&(owner, circuit_id)).expect("SBT does not exist");
         require!(sbt.expiry >= block_timestamp() / 1_000_000_000, "SBT is expired");
         sbt
@@ -108,7 +125,8 @@ impl Contract {
     /// e.g., by using a different issuer or actionId
     pub fn get_sbt(&self, owner: String, circuit_id: CircuitId) -> SBT {
         let owner = AccountId::from_str(&owner).expect("Invalid account ID");
-        self._get_sbt(owner, circuit_id)
+        let commitment = AccountCommitment::from_account_id(&owner);
+        self._get_sbt(commitment, circuit_id)
     }
 
      // IMPORTANT: make sure you check the public values such as actionId from this. Someone can forge a proof if you don't check the public values
@@ -117,6 +135,15 @@ impl Contract {
         let (account_id, circuit_id) = self.nullifiers_lookup.get(&nullifier).expect("Nullifier could not be found");
         self._get_sbt(account_id, circuit_id)
     }
+
+    // pub fn revoke_sbt(&mut self, owner: String, circuit_id: CircuitId) {
+    //     // TODO: require that the caller is the owner
+    //     let owner = AccountId::from_str(&owner).expect("Invalid account ID");
+    //     let commitment = AccountCommitment::from_account_id(&owner);
+    //     self.sbt_owners.remove(&(commitment, circuit_id));
+    // }
+
+
 }
 
 
@@ -153,7 +180,7 @@ mod tests {
         );
 
         let server_response = serde_json::from_str::<Value>(
-            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"testaccount.testnet\",\"expiration\":\"0x6773e0bb\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"public_values\":[\"0x6773e0bb\",\"0x746573746163636f756e742e746573746e6574\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"0x2cf7ee166e16db45608361744b945755faafc389d377594c50232105b5b2f29f\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x9d2554a7337e3c1b5a41c2fa13db6799bb8d01187d44249a6099d61a9d759a63cc529791a7a41b99b95ac717cd7e73667a52e66177b5c82a1f168764ea4b650e\"}"
+            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"expiration\":\"0x67983372\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x289275141dde7ab610d48835f9f9e6cb5aa417d98fd817e48fd4022394673144\",\"public_values\":[\"0x67983372\",\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x289275141dde7ab610d48835f9f9e6cb5aa417d98fd817e48fd4022394673144\",\"0x14ed8557bbc818f70eeb3aa9196f7af073f23a0db59a7a844c26ff2ef8bc2e65\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x57862b84aa3e042a8b39ea7d53d1c272362c316b0f071242f508f52f4234d3134e9789f3e2725b861e040a8b20e4617714bab9bc42103706322f864badb98e03\"}"
         ).expect("Invalid JSON");
         assert_eq!(
             contract.set_sbt(
@@ -282,7 +309,7 @@ mod tests {
         let context = get_context(1706572582000000000 + 365*24*60*60*1_000_000_000);
         testing_env!(context);
         let server_response = serde_json::from_str::<Value>(
-            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"testaccount.testnet\",\"expiration\":\"0x6773e0bb\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"public_values\":[\"0x6773e0bb\",\"0x746573746163636f756e742e746573746e6574\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"0x2cf7ee166e16db45608361744b945755faafc389d377594c50232105b5b2f29f\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x9d2554a7337e3c1b5a41c2fa13db6799bb8d01187d44249a6099d61a9d759a63cc529791a7a41b99b95ac717cd7e73667a52e66177b5c82a1f168764ea4b650e\"}"
+            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"expiration\":\"0x67983372\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x289275141dde7ab610d48835f9f9e6cb5aa417d98fd817e48fd4022394673144\",\"public_values\":[\"0x67983372\",\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x289275141dde7ab610d48835f9f9e6cb5aa417d98fd817e48fd4022394673144\",\"0x14ed8557bbc818f70eeb3aa9196f7af073f23a0db59a7a844c26ff2ef8bc2e65\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x57862b84aa3e042a8b39ea7d53d1c272362c316b0f071242f508f52f4234d3134e9789f3e2725b861e040a8b20e4617714bab9bc42103706322f864badb98e03\"}"
         ).expect("Invalid JSON");
         let circuit_id = hex::decode(server_response["values"]["circuit_id"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap();
         let sbt_reciever = server_response["values"]["sbt_reciever"].as_str().unwrap().to_string();
@@ -333,7 +360,7 @@ mod tests {
     #[should_panic(expected = "Nullifier could not be found")]
     fn nullifier_mapping() {
         let server_response = serde_json::from_str::<Value>(
-            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"testaccount.testnet\",\"expiration\":\"0x6773e0bb\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"public_values\":[\"0x6773e0bb\",\"0x746573746163636f756e742e746573746e6574\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"0x2cf7ee166e16db45608361744b945755faafc389d377594c50232105b5b2f29f\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x9d2554a7337e3c1b5a41c2fa13db6799bb8d01187d44249a6099d61a9d759a63cc529791a7a41b99b95ac717cd7e73667a52e66177b5c82a1f168764ea4b650e\"}"
+            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"expiration\":\"0x67983372\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x289275141dde7ab610d48835f9f9e6cb5aa417d98fd817e48fd4022394673144\",\"public_values\":[\"0x67983372\",\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x289275141dde7ab610d48835f9f9e6cb5aa417d98fd817e48fd4022394673144\",\"0x14ed8557bbc818f70eeb3aa9196f7af073f23a0db59a7a844c26ff2ef8bc2e65\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x57862b84aa3e042a8b39ea7d53d1c272362c316b0f071242f508f52f4234d3134e9789f3e2725b861e040a8b20e4617714bab9bc42103706322f864badb98e03\"}"
         ).expect("Invalid JSON");
         let circuit_id = hex::decode(server_response["values"]["circuit_id"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap();
         let sbt_reciever = server_response["values"]["sbt_reciever"].as_str().unwrap().to_string();
@@ -365,7 +392,7 @@ mod tests {
         // get_sbt_by_nullifier should have the same result as get_sbt
         assert_eq!(
             contract.get_sbt_by_nullifier(nullifier),
-            contract.get_sbt(sbt_reciever, circuit_id)
+            contract.get_sbt("testaccount.testnet".to_string(), circuit_id)
         );
 
         // Should fail for an unused nullifier
