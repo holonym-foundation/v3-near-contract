@@ -3,7 +3,7 @@ use std::str::FromStr;
 use ethers_core::k256::sha2::{Sha512, Digest};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, LookupSet};
-use near_sdk::env::{block_timestamp, attached_deposit};
+use near_sdk::env::{attached_deposit, block_timestamp, predecessor_account_id};
 use near_sdk::{near_bindgen, AccountId, require};
 use serde::Serialize;
 use ed25519_dalek::{PUBLIC_KEY_LENGTH, Verifier, VerifyingKey, Signature};
@@ -56,7 +56,12 @@ impl Default for Contract {
             sbt_owners: LookupMap::new(b"sbt_owners".to_vec()), 
             used_nullifiers: LookupSet::new(b"used_nullifiers".to_vec()), 
             nullifiers_lookup: LookupMap::new(b"nullifiers_lookup".to_vec()),
-            verifier_pubkey: hex::decode("ec1169505a31c34288953b77e707ff1c5390d1f9b63150a17afb7fb44531b11c").expect("Invalid hex for pubkey").try_into().expect("Invalid length for pubkey") // Testing value: ec1169505a31c34288953b77e707ff1c5390d1f9b63150a17afb7fb44531b11c. Production value: 8abb54a589fd33af1e42617939bcf58f30674c20d9e1a8342e6abe078280a70c
+            verifier_pubkey: {
+                #[cfg(test)]
+                { hex::decode("ec1169505a31c34288953b77e707ff1c5390d1f9b63150a17afb7fb44531b11c") }
+                #[cfg(not(test))]
+                { hex::decode("8abb54a589fd33af1e42617939bcf58f30674c20d9e1a8342e6abe078280a70c") }
+            }.expect("Invalid hex for pubkey").try_into().expect("Invalid length for pubkey") 
         }
     }
 }
@@ -136,12 +141,18 @@ impl Contract {
         self._get_sbt(account_id, circuit_id)
     }
 
-    // pub fn revoke_sbt(&mut self, owner: String, circuit_id: CircuitId) {
-    //     // TODO: require that the caller is the owner
-    //     let owner = AccountId::from_str(&owner).expect("Invalid account ID");
-    //     let commitment = AccountCommitment::from_account_id(&owner);
-    //     self.sbt_owners.remove(&(commitment, circuit_id));
-    // }
+    pub fn revoke_sbt(&mut self, owner: String, circuit_id: CircuitId) {
+        // TODO: require that the caller is the owner
+        require!(predecessor_account_id() == {
+            #[cfg(test)]
+            { AccountId::from_str("bob.near") }
+            #[cfg(not(test))]
+            { AccountId::from_str("holonym_id.near") }
+        }.unwrap(), "Only the revoker can revoke SBTs");
+        let owner = AccountId::from_str(&owner).expect("Invalid account ID");
+        let commitment = AccountCommitment::from_account_id(&owner);
+        self.sbt_owners.remove(&(commitment, circuit_id));
+    }
 
 
 }
@@ -155,9 +166,9 @@ mod tests {
     use near_sdk::test_utils::VMContextBuilder;
     use near_sdk::{testing_env, VMContext};
 
-    fn get_context(timestamp: u64) -> VMContext {
+    fn get_context(timestamp: u64, account_id: AccountId) -> VMContext {
         VMContextBuilder::new()
-            .signer_account_id("bob_near".parse().unwrap())
+            .predecessor_account_id(account_id)
             .block_timestamp(timestamp)
             .is_view(false)
             .build()
@@ -165,7 +176,7 @@ mod tests {
 
     #[test]
     fn get_set_sbt() {
-        let context = get_context(1706572582000000000);
+        let context = get_context(1706572582000000000, "bob_near".parse().unwrap());
         testing_env!(context);
 
         let mut contract = Contract::default();
@@ -257,7 +268,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "This has already been proven")]
     fn nullifier_reuse() {
-        let context = get_context(1706572582000000000);
+        let context = get_context(1706572582000000000, "bob_near".parse().unwrap());
         testing_env!(context);
 
         let server_response = serde_json::from_str::<Value>(
@@ -306,7 +317,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "SBT is expired")]
     fn expiration() {
-        let context = get_context(1706572582000000000 + 365*24*60*60*1_000_000_000);
+        let context = get_context(1706572582000000000 + 365*24*60*60*1_000_000_000, "bob_near".parse().unwrap());
         testing_env!(context);
         let server_response = serde_json::from_str::<Value>(
             "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"expiration\":\"0x67983372\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x289275141dde7ab610d48835f9f9e6cb5aa417d98fd817e48fd4022394673144\",\"public_values\":[\"0x67983372\",\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x289275141dde7ab610d48835f9f9e6cb5aa417d98fd817e48fd4022394673144\",\"0x14ed8557bbc818f70eeb3aa9196f7af073f23a0db59a7a844c26ff2ef8bc2e65\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x57862b84aa3e042a8b39ea7d53d1c272362c316b0f071242f508f52f4234d3134e9789f3e2725b861e040a8b20e4617714bab9bc42103706322f864badb98e03\"}"
@@ -397,5 +408,100 @@ mod tests {
 
         // Should fail for an unused nullifier
         contract.get_sbt_by_nullifier([42; 32]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Only the revoker can revoke SBTs")]
+    fn only_revoker_can_revoke() {
+        let context = get_context(1706572582000000000, "alice_near".parse().unwrap());
+        testing_env!(context);
+
+        let mut contract = Contract::default();
+        let server_response = serde_json::from_str::<Value>(
+            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"expiration\":\"0x67983372\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x289275141dde7ab610d48835f9f9e6cb5aa417d98fd817e48fd4022394673144\",\"public_values\":[\"0x67983372\",\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x289275141dde7ab610d48835f9f9e6cb5aa417d98fd817e48fd4022394673144\",\"0x14ed8557bbc818f70eeb3aa9196f7af073f23a0db59a7a844c26ff2ef8bc2e65\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x57862b84aa3e042a8b39ea7d53d1c272362c316b0f071242f508f52f4234d3134e9789f3e2725b861e040a8b20e4617714bab9bc42103706322f864badb98e03\"}"
+        ).expect("Invalid JSON");
+
+        let circuit_id = hex::decode(server_response["values"]["circuit_id"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap();
+        
+        assert_eq!(
+            contract.set_sbt(
+                circuit_id,
+                server_response["values"]["sbt_reciever"].as_str().unwrap().to_string(),
+                u64::from_str_radix(&server_response["values"]["expiration"].as_str().unwrap().replace("0x", ""), 16).unwrap(),
+                u128::from_str_radix(&server_response["values"]["custom_fee"].as_str().unwrap().replace("0x", ""), 16).unwrap(),
+                hex::decode(server_response["values"]["nullifier"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap(),
+                server_response["values"]["public_values"].as_array().expect("Invalid public_values").iter().map(|x| {
+                    let mut bytes = [0u8; 32];
+                    x.as_str().unwrap().parse::<U256>().unwrap().to_big_endian(&mut bytes);
+                    bytes
+                }).collect(),
+                hex::decode(server_response["sig"].as_str().unwrap().replace("0x", "")).expect("Invalid hex for signature")
+            ),
+            ()
+        );
+
+        assert_ne!(contract.get_sbt(
+                "testaccount.testnet".to_string(),
+                circuit_id
+            ).expiry, 
+            0
+        );
+        
+        // Should panic because the revoker is not the caller
+        contract.revoke_sbt(
+            "testaccount.testnet".to_string(),
+            circuit_id
+        );
+
+    }
+
+    #[test]
+    #[should_panic(expected = "SBT does not exist")]
+    fn revocation_works() {
+        let context = get_context(1706572582000000000, "bob.near".parse().unwrap());
+        testing_env!(context);
+
+        let mut contract = Contract::default();
+        let server_response = serde_json::from_str::<Value>(
+            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"expiration\":\"0x67983372\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x289275141dde7ab610d48835f9f9e6cb5aa417d98fd817e48fd4022394673144\",\"public_values\":[\"0x67983372\",\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x289275141dde7ab610d48835f9f9e6cb5aa417d98fd817e48fd4022394673144\",\"0x14ed8557bbc818f70eeb3aa9196f7af073f23a0db59a7a844c26ff2ef8bc2e65\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x57862b84aa3e042a8b39ea7d53d1c272362c316b0f071242f508f52f4234d3134e9789f3e2725b861e040a8b20e4617714bab9bc42103706322f864badb98e03\"}"
+        ).expect("Invalid JSON");
+
+        let circuit_id = hex::decode(server_response["values"]["circuit_id"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap();
+        
+        assert_eq!(
+            contract.set_sbt(
+                circuit_id,
+                server_response["values"]["sbt_reciever"].as_str().unwrap().to_string(),
+                u64::from_str_radix(&server_response["values"]["expiration"].as_str().unwrap().replace("0x", ""), 16).unwrap(),
+                u128::from_str_radix(&server_response["values"]["custom_fee"].as_str().unwrap().replace("0x", ""), 16).unwrap(),
+                hex::decode(server_response["values"]["nullifier"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap(),
+                server_response["values"]["public_values"].as_array().expect("Invalid public_values").iter().map(|x| {
+                    let mut bytes = [0u8; 32];
+                    x.as_str().unwrap().parse::<U256>().unwrap().to_big_endian(&mut bytes);
+                    bytes
+                }).collect(),
+                hex::decode(server_response["sig"].as_str().unwrap().replace("0x", "")).expect("Invalid hex for signature")
+            ),
+            ()
+        );
+
+        assert_ne!(contract.get_sbt(
+                "testaccount.testnet".to_string(),
+                circuit_id
+            ).expiry, 
+            0
+        );
+
+        contract.revoke_sbt(
+            "testaccount.testnet".to_string(),
+            circuit_id
+        );
+
+        // Should panic because now the SBT should not exist
+        contract.get_sbt(
+            "testaccount.testnet".to_string(),
+            circuit_id
+        );
+
     }
 }
