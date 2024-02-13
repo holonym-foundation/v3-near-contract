@@ -1,6 +1,5 @@
 use std::str::FromStr;
-
-use ethers_core::k256::sha2::{Sha512, Digest};
+use sha2::{Sha512, Digest};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, LookupSet};
 use near_sdk::env::{attached_deposit, block_timestamp, predecessor_account_id};
@@ -152,6 +151,23 @@ impl Contract {
         let owner = AccountId::from_str(&owner).expect("Invalid account ID");
         let commitment = AccountCommitment::from_account_id(&owner);
         self.sbt_owners.remove(&(commitment, circuit_id));
+    }
+
+    pub fn has_gov_id_sbt(&mut self, owner: String) {
+        let sbt = self.get_sbt(owner, [114,157,102,14,28,2,228,228,25,116,94,97,125,100,63,137,122,83,134,115,204,241,5,30,9,59,191,165,139,10,18,11]);
+        // Check the actionID is the default sybil resistant actionId of 123456789
+        require!(BigUint::from_bytes_be(&sbt.public_values[2]) == BigUint::from(123456789u32), "Non-default Action ID");
+        // CHeck the issuer address is the Holonym government ID issuer
+        require!(sbt.public_values[2] == hex!("03fae82f38bf01d9799d57fdda64fad4ac44e4c2c2f16c5bf8e1873d0a3e1993"), "Invalid Issuer");
+    }
+
+    pub fn has_phone_sbt(&mut self, owner: String) {
+        let sbt = self.get_sbt(owner, [114,157,102,14,28,2,228,228,25,116,94,97,125,100,63,137,122,83,134,115,204,241,5,30,9,59,191,165,139,10,18,11]);
+        // Check the actionID is the default sybil resistant actionId of 123456789
+        require!(BigUint::from_bytes_be(&sbt.public_values[2]) == BigUint::from(123456789u32), "Non-default Action ID");
+        // CHeck the issuer address is the Holonym phone # issuer
+        require!(sbt.public_values[2] == hex!("0040b8810cbaed9647b54d18cc98b720e1e8876be5d8e7089d3c079fc61c30a4"), "Invalid Issuer");
+
     }
 
 
