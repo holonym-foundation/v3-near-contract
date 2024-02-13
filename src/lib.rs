@@ -153,21 +153,35 @@ impl Contract {
         self.sbt_owners.remove(&(commitment, circuit_id));
     }
 
-    pub fn has_gov_id_sbt(&mut self, owner: String) {
+    /// Returns true if the user has KYC SBT, otherwise panics with a message
+    pub fn has_gov_id_sbt(&self, owner: String) -> bool {
         let sbt = self.get_sbt(owner, [114,157,102,14,28,2,228,228,25,116,94,97,125,100,63,137,122,83,134,115,204,241,5,30,9,59,191,165,139,10,18,11]);
         // Check the actionID is the default sybil resistant actionId of 123456789
-        require!(BigUint::from_bytes_be(&sbt.public_values[2]) == BigUint::from(123456789u32), "Non-default Action ID");
-        // CHeck the issuer address is the Holonym government ID issuer
-        require!(sbt.public_values[2] == hex!("03fae82f38bf01d9799d57fdda64fad4ac44e4c2c2f16c5bf8e1873d0a3e1993"), "Invalid Issuer");
+        require!(BigUint::from_bytes_be(&sbt.public_values[2]) == BigUint::from(123456789u32), "Invalid action ID");        // Check the issuer address is the Holonym government ID issuer
+        require!(sbt.public_values[4] == {
+             #[cfg(not(test))]
+             { hex!("03fae82f38bf01d9799d57fdda64fad4ac44e4c2c2f16c5bf8e1873d0a3e1993") }
+             #[cfg(test)]
+             { hex!("2a7c39f19fdaa01187b64b9aaba9ecd2af0c33603364d1c055926989ecd1995e") }
+        }, "Should be government ID issuer");
+
+        true
     }
 
-    pub fn has_phone_sbt(&mut self, owner: String) {
-        let sbt = self.get_sbt(owner, [114,157,102,14,28,2,228,228,25,116,94,97,125,100,63,137,122,83,134,115,204,241,5,30,9,59,191,165,139,10,18,11]);
+    /// Returns true if the user has a phone SBT, otherwise panics with a message
+    pub fn has_phone_sbt(&self, owner: String) -> bool {
+        let sbt = self.get_sbt(owner, [188,224,82,207,114,61,202,6,162,27,211,207,131,139,197,24,147,23,48,251,61,183,133,159,201,204,134,240,213,72,52,149]);
         // Check the actionID is the default sybil resistant actionId of 123456789
-        require!(BigUint::from_bytes_be(&sbt.public_values[2]) == BigUint::from(123456789u32), "Non-default Action ID");
-        // CHeck the issuer address is the Holonym phone # issuer
-        require!(sbt.public_values[2] == hex!("0040b8810cbaed9647b54d18cc98b720e1e8876be5d8e7089d3c079fc61c30a4"), "Invalid Issuer");
-
+        require!(BigUint::from_bytes_be(&sbt.public_values[2]) == BigUint::from(123456789u32), "Invalid action ID");
+        // Check the issuer address is the Holonym phone # issuer
+        require!(sbt.public_values[4] == {
+            #[cfg(not(test))]
+            { hex!("0040b8810cbaed9647b54d18cc98b720e1e8876be5d8e7089d3c079fc61c30a4") }
+            #[cfg(test)]
+            { hex!("14ed8557bbc818f70eeb3aa9196f7af073f23a0db59a7a844c26ff2ef8bc2e65") }
+        }, "Should be phone issuer");
+        
+        true
     }
 
 
@@ -207,24 +221,22 @@ mod tests {
         );
 
         let server_response = serde_json::from_str::<Value>(
-            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"expiration\":\"0x67983372\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x289275141dde7ab610d48835f9f9e6cb5aa417d98fd817e48fd4022394673144\",\"public_values\":[\"0x67983372\",\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x289275141dde7ab610d48835f9f9e6cb5aa417d98fd817e48fd4022394673144\",\"0x14ed8557bbc818f70eeb3aa9196f7af073f23a0db59a7a844c26ff2ef8bc2e65\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x57862b84aa3e042a8b39ea7d53d1c272362c316b0f071242f508f52f4234d3134e9789f3e2725b861e040a8b20e4617714bab9bc42103706322f864badb98e03\"}"
+            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"testaccount.testnet\",\"expiration\":\"0x6773e0bb\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"public_values\":[\"0x6773e0bb\",\"0x746573746163636f756e742e746573746e6574\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"0x2cf7ee166e16db45608361744b945755faafc389d377594c50232105b5b2f29f\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x9d2554a7337e3c1b5a41c2fa13db6799bb8d01187d44249a6099d61a9d759a63cc529791a7a41b99b95ac717cd7e73667a52e66177b5c82a1f168764ea4b650e\"}"
         ).expect("Invalid JSON");
-        assert_eq!(
-            contract.set_sbt(
-                hex::decode(server_response["values"]["circuit_id"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap(),
-                // server_response["values"]["proof_ipfs_cid"].as_str().expect("Invalid proof_ipfs_cid").to_string(),
-                server_response["values"]["sbt_reciever"].as_str().unwrap().to_string(),
-                u64::from_str_radix(&server_response["values"]["expiration"].as_str().unwrap().replace("0x", ""), 16).unwrap(),
-                u128::from_str_radix(&server_response["values"]["custom_fee"].as_str().unwrap().replace("0x", ""), 16).unwrap(),
-                hex::decode(server_response["values"]["nullifier"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap(),
-                server_response["values"]["public_values"].as_array().expect("Invalid public_values").iter().map(|x| {
-                    let mut bytes = [0u8; 32];
-                    x.as_str().unwrap().parse::<U256>().unwrap().to_big_endian(&mut bytes);
-                    bytes
-                }).collect(),
-                hex::decode(server_response["sig"].as_str().unwrap().replace("0x", "")).expect("Invalid hex for signature")
-            ),
-            ()
+
+        contract.set_sbt(
+            hex::decode(server_response["values"]["circuit_id"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap(),
+            // server_response["values"]["proof_ipfs_cid"].as_str().expect("Invalid proof_ipfs_cid").to_string(),
+            server_response["values"]["sbt_reciever"].as_str().unwrap().to_string(),
+            u64::from_str_radix(&server_response["values"]["expiration"].as_str().unwrap().replace("0x", ""), 16).unwrap(),
+            u128::from_str_radix(&server_response["values"]["custom_fee"].as_str().unwrap().replace("0x", ""), 16).unwrap(),
+            hex::decode(server_response["values"]["nullifier"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap(),
+            server_response["values"]["public_values"].as_array().expect("Invalid public_values").iter().map(|x| {
+                let mut bytes = [0u8; 32];
+                x.as_str().unwrap().parse::<U256>().unwrap().to_big_endian(&mut bytes);
+                bytes
+            }).collect(),
+            hex::decode(server_response["sig"].as_str().unwrap().replace("0x", "")).expect("Invalid hex for signature")
         );
 
         assert_ne!(contract.get_sbt(
@@ -233,8 +245,81 @@ mod tests {
             ).expiry, 
             0
         );
+
     }
 
+    // tests has_gov_id_sbt and has_phone_sbt
+    #[test]
+    fn boolean_helpers() {
+
+        let context = get_context(1706572582000000000, "bob_near".parse().unwrap());
+        testing_env!(context);
+
+        let mut contract = Contract::default();
+
+        // --- Phone ---- //
+        assert!(
+            std::panic::catch_unwind(||
+                contract.has_phone_sbt("testaccount.testnet".to_string())
+            ).is_err()
+        );
+
+        let server_phone_response = serde_json::from_str::<Value>(
+            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"expiration\":\"0x67a4657e\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x2f0a404cef1611163c85eba6f9979ac1e2951b7ea9a8a7ec2ef9aab8a0ca3884\",\"public_values\":[\"0x67a4657e\",\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"0x75bcd15\",\"0x2f0a404cef1611163c85eba6f9979ac1e2951b7ea9a8a7ec2ef9aab8a0ca3884\",\"0x14ed8557bbc818f70eeb3aa9196f7af073f23a0db59a7a844c26ff2ef8bc2e65\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x186f5d385019dcba85a9d895d68de13734d01decf8e4958debad03bbd4e16875b83f74b3e6a874e784dfe9e72fe1f1386de98d8fa2f708dcfafa6fcc19c16108\"}"
+        ).expect("Invalid JSON");
+        
+        assert_eq!(
+            contract.set_sbt(
+                hex::decode(server_phone_response["values"]["circuit_id"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap(),
+                server_phone_response["values"]["sbt_reciever"].as_str().unwrap().to_string(),
+                u64::from_str_radix(&server_phone_response["values"]["expiration"].as_str().unwrap().replace("0x", ""), 16).unwrap(),
+                u128::from_str_radix(&server_phone_response["values"]["custom_fee"].as_str().unwrap().replace("0x", ""), 16).unwrap(),
+                hex::decode(server_phone_response["values"]["nullifier"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap(),
+                server_phone_response["values"]["public_values"].as_array().expect("Invalid public_values").iter().map(|x| {
+                    let mut bytes = [0u8; 32];
+                    x.as_str().unwrap().parse::<U256>().unwrap().to_big_endian(&mut bytes);
+                    bytes
+                }).collect(),
+                hex::decode(server_phone_response["sig"].as_str().unwrap().replace("0x", "")).expect("Invalid hex for signature")
+            ),
+            ()
+        );
+
+        assert!(contract.has_phone_sbt("testaccount.testnet".to_string()));
+
+        
+        // --- Government ID ---- //
+        
+        assert!(
+            std::panic::catch_unwind(||
+                contract.has_gov_id_sbt("testaccount.testnet".to_string())
+            ).is_err()
+        );
+
+        let server_gov_id_response = serde_json::from_str::<Value>(
+            "{\"values\":{\"circuit_id\":\"0x729d660e1c02e4e419745e617d643f897a538673ccf1051e093bbfa58b0a120b\",\"sbt_reciever\":\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"expiration\":\"0x67919672\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x1ed40d7b9d5b9175468c3f31a4d94e73af451a1a09bd62d2a165d841ad10bc08\",\"public_values\":[\"0x67919672\",\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"0x75bcd15\",\"0x1ed40d7b9d5b9175468c3f31a4d94e73af451a1a09bd62d2a165d841ad10bc08\",\"0x2a7c39f19fdaa01187b64b9aaba9ecd2af0c33603364d1c055926989ecd1995e\"],\"chain_id\":\"NEAR\"},\"sig\":\"0xf4f7bfbf74dcb21a668b058b2fa93435289a449fa326f3a5c35b0f24de95fb499fc4f4ae811a421c171db89e860cb55583f3ae516efae974aba2d21d2b530c03\"}"
+        ).expect("Invalid JSON");
+        
+        assert_eq!(
+            contract.set_sbt(
+                hex::decode(server_gov_id_response["values"]["circuit_id"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap(),
+                server_gov_id_response["values"]["sbt_reciever"].as_str().unwrap().to_string(),
+                u64::from_str_radix(&server_gov_id_response["values"]["expiration"].as_str().unwrap().replace("0x", ""), 16).unwrap(),
+                u128::from_str_radix(&server_gov_id_response["values"]["custom_fee"].as_str().unwrap().replace("0x", ""), 16).unwrap(),
+                hex::decode(server_gov_id_response["values"]["nullifier"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap(),
+                server_gov_id_response["values"]["public_values"].as_array().expect("Invalid public_values").iter().map(|x| {
+                    let mut bytes = [0u8; 32];
+                    x.as_str().unwrap().parse::<U256>().unwrap().to_big_endian(&mut bytes);
+                    bytes
+                }).collect(),
+                hex::decode(server_gov_id_response["sig"].as_str().unwrap().replace("0x", "")).expect("Invalid hex for signature")
+            ),
+            ()
+        );
+
+        assert!(contract.has_gov_id_sbt("testaccount.testnet".to_string()));
+        
+    }
     // This could have more comprehensive coverage of edge cases :)
     #[test]
     fn everything_covered_by_sig() {
