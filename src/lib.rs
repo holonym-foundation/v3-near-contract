@@ -13,7 +13,7 @@ pub type FrBytes = [u8; 32];
 pub type CircuitId = [u8; 32];
 
 /// Commitment to an account id that can fit in a single field element. The String represents the field element in hex
-#[derive(BorshDeserialize, BorshSerialize)]
+#[derive(Debug, BorshDeserialize, BorshSerialize)]
 pub struct AccountCommitment(pub String);
 impl AccountCommitment {
     /// Hashes to a field element
@@ -113,6 +113,7 @@ impl Contract {
             (AccountCommitment(sbt_owner_commitment.clone()), circuit_id), 
             &SBT { expiry, public_values }
         );
+
         self.nullifiers_lookup.insert(&
             nullifier,
             &(AccountCommitment(sbt_owner_commitment), circuit_id)
@@ -127,8 +128,8 @@ impl Contract {
 
     // IMPORTANT: make sure you check the public values such as actionId from this. Someone can forge a proof if you don't check the public values
     /// e.g., by using a different issuer or actionId
-    pub fn get_sbt(&self, owner: String, circuit_id: CircuitId) -> SBT {
-        let owner = AccountId::from_str(&owner).expect("Invalid account ID");
+    pub fn get_sbt(&self, owner: AccountId, circuit_id: CircuitId) -> SBT {
+        // let owner = AccountId::from_str(&owner).expect("Invalid account ID");
         let commitment = AccountCommitment::from_account_id(&owner);
         self._get_sbt(commitment, circuit_id)
     }
@@ -140,7 +141,7 @@ impl Contract {
         self._get_sbt(account_id, circuit_id)
     }
 
-    pub fn revoke_sbt(&mut self, owner: String, circuit_id: CircuitId) {
+    pub fn revoke_sbt(&mut self, owner: AccountId, circuit_id: CircuitId) {
         // TODO: require that the caller is the owner
         require!(predecessor_account_id() == {
             #[cfg(test)]
@@ -148,13 +149,13 @@ impl Contract {
             #[cfg(not(test))]
             { AccountId::from_str("holonym_id.near") }
         }.unwrap(), "Only the revoker can revoke SBTs");
-        let owner = AccountId::from_str(&owner).expect("Invalid account ID");
+        // let owner = AccountId::from_str(&owner).expect("Invalid account ID");
         let commitment = AccountCommitment::from_account_id(&owner);
         self.sbt_owners.remove(&(commitment, circuit_id));
     }
 
     /// Returns true if the user has KYC SBT, otherwise panics with a message
-    pub fn has_gov_id_sbt(&self, owner: String) -> bool {
+    pub fn has_gov_id_sbt(&self, owner: AccountId) -> bool {
         let sbt = self.get_sbt(owner, [114,157,102,14,28,2,228,228,25,116,94,97,125,100,63,137,122,83,134,115,204,241,5,30,9,59,191,165,139,10,18,11]);
         // Check the actionID is the default sybil resistant actionId of 123456789
         require!(BigUint::from_bytes_be(&sbt.public_values[2]) == BigUint::from(123456789u32), "Invalid action ID");        // Check the issuer address is the Holonym government ID issuer
@@ -169,7 +170,7 @@ impl Contract {
     }
 
     /// Returns true if the user has a phone SBT, otherwise panics with a message
-    pub fn has_phone_sbt(&self, owner: String) -> bool {
+    pub fn has_phone_sbt(&self, owner: AccountId) -> bool {
         let sbt = self.get_sbt(owner, [188,224,82,207,114,61,202,6,162,27,211,207,131,139,197,24,147,23,48,251,61,183,133,159,201,204,134,240,213,72,52,149]);
         // Check the actionID is the default sybil resistant actionId of 123456789
         require!(BigUint::from_bytes_be(&sbt.public_values[2]) == BigUint::from(123456789u32), "Invalid action ID");
@@ -214,16 +215,16 @@ mod tests {
         assert!(
             std::panic::catch_unwind(||
                 contract.get_sbt(
-                    "testaccount.testnet".to_string(),
+                    AccountId::from_str("testaccount.testnet").unwrap(),
                     hex::decode("bce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495").unwrap().try_into().unwrap()
                 )
             ).is_err()
         );
 
         let server_response = serde_json::from_str::<Value>(
-            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"testaccount.testnet\",\"expiration\":\"0x6773e0bb\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"public_values\":[\"0x6773e0bb\",\"0x746573746163636f756e742e746573746e6574\",\"0x25f7bd02f163928099df325ec1cb1\",\"0x26eda727613ae02a38128bd4e0917fb8a567caf041057408942a101da493ebfb\",\"0x2cf7ee166e16db45608361744b945755faafc389d377594c50232105b5b2f29f\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x9d2554a7337e3c1b5a41c2fa13db6799bb8d01187d44249a6099d61a9d759a63cc529791a7a41b99b95ac717cd7e73667a52e66177b5c82a1f168764ea4b650e\"}"
+            "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"expiration\":\"0x67a4657e\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x2f0a404cef1611163c85eba6f9979ac1e2951b7ea9a8a7ec2ef9aab8a0ca3884\",\"public_values\":[\"0x67a4657e\",\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"0x75bcd15\",\"0x2f0a404cef1611163c85eba6f9979ac1e2951b7ea9a8a7ec2ef9aab8a0ca3884\",\"0x14ed8557bbc818f70eeb3aa9196f7af073f23a0db59a7a844c26ff2ef8bc2e65\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x186f5d385019dcba85a9d895d68de13734d01decf8e4958debad03bbd4e16875b83f74b3e6a874e784dfe9e72fe1f1386de98d8fa2f708dcfafa6fcc19c16108\"}"
         ).expect("Invalid JSON");
-
+        
         contract.set_sbt(
             hex::decode(server_response["values"]["circuit_id"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap(),
             // server_response["values"]["proof_ipfs_cid"].as_str().expect("Invalid proof_ipfs_cid").to_string(),
@@ -240,7 +241,7 @@ mod tests {
         );
 
         assert_ne!(contract.get_sbt(
-                "testaccount.testnet".to_string(),
+                AccountId::from_str("testaccount.testnet").unwrap(),
                 hex::decode("bce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495").unwrap().try_into().unwrap()
             ).expiry, 
             0
@@ -260,7 +261,7 @@ mod tests {
         // --- Phone ---- //
         assert!(
             std::panic::catch_unwind(||
-                contract.has_phone_sbt("testaccount.testnet".to_string())
+                contract.has_phone_sbt(AccountId::from_str("testaccount.testnet").unwrap())
             ).is_err()
         );
 
@@ -285,14 +286,14 @@ mod tests {
             ()
         );
 
-        assert!(contract.has_phone_sbt("testaccount.testnet".to_string()));
+        assert!(contract.has_phone_sbt(AccountId::from_str("testaccount.testnet").unwrap()));
 
         
         // --- Government ID ---- //
         
         assert!(
             std::panic::catch_unwind(||
-                contract.has_gov_id_sbt("testaccount.testnet".to_string())
+                contract.has_gov_id_sbt(AccountId::from_str("testaccount.testnet").unwrap())
             ).is_err()
         );
 
@@ -317,7 +318,7 @@ mod tests {
             ()
         );
 
-        assert!(contract.has_gov_id_sbt("testaccount.testnet".to_string()));
+        assert!(contract.has_gov_id_sbt(AccountId::from_str("testaccount.testnet").unwrap()));
         
     }
     // This could have more comprehensive coverage of edge cases :)
@@ -452,7 +453,7 @@ mod tests {
 
         // This should panic and be caught by should_panic macro:
         contract.get_sbt(
-            "testaccount.testnet".to_string(),
+            AccountId::from_str("testaccount.testnet").unwrap(),
             hex::decode("bce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495").unwrap().try_into().unwrap()
         );
 
@@ -504,7 +505,7 @@ mod tests {
         // get_sbt_by_nullifier should have the same result as get_sbt
         assert_eq!(
             contract.get_sbt_by_nullifier(nullifier),
-            contract.get_sbt("testaccount.testnet".to_string(), circuit_id)
+            contract.get_sbt(AccountId::from_str("testaccount.testnet").unwrap(), circuit_id)
         );
 
         // Should fail for an unused nullifier
@@ -542,7 +543,7 @@ mod tests {
         );
 
         assert_ne!(contract.get_sbt(
-                "testaccount.testnet".to_string(),
+                AccountId::from_str("testaccount.testnet").unwrap(),
                 circuit_id
             ).expiry, 
             0
@@ -550,7 +551,7 @@ mod tests {
         
         // Should panic because the revoker is not the caller
         contract.revoke_sbt(
-            "testaccount.testnet".to_string(),
+            AccountId::from_str("testaccount.testnet").unwrap(),
             circuit_id
         );
 
@@ -587,20 +588,20 @@ mod tests {
         );
 
         assert_ne!(contract.get_sbt(
-                "testaccount.testnet".to_string(),
+                AccountId::from_str("testaccount.testnet").unwrap(),
                 circuit_id
             ).expiry, 
             0
         );
 
         contract.revoke_sbt(
-            "testaccount.testnet".to_string(),
+            AccountId::from_str("testaccount.testnet").unwrap(),
             circuit_id
         );
 
         // Should panic because now the SBT should not exist
         contract.get_sbt(
-            "testaccount.testnet".to_string(),
+            AccountId::from_str("testaccount.testnet").unwrap(),
             circuit_id
         );
 
