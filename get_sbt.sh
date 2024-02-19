@@ -8,4 +8,4 @@ else
     echo "Invalid circuit id"
     exit 1
 fi
-near view dev-1706164838612-14891971350165 get_sbt --args '{"owner": "'"$2"'", "circuit_id": '$circuitid' }'
+near view verifier.holonym_id.testnet get_sbt --args '{"owner": "'"$2"'", "circuit_id": '$circuitid' }'

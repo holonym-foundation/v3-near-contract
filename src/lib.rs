@@ -125,6 +125,16 @@ impl Contract {
         require!(sbt.expiry >= block_timestamp() / 1_000_000_000, "SBT is expired");
         sbt
     }
+    // Does same but returns an option instead of panicking
+    fn _get_sbt_no_panic(&self, owner: AccountCommitment, circuit_id: CircuitId) -> Option<SBT> {
+        let sbt = self.sbt_owners.get(&(owner, circuit_id));
+        if let Some(sbt) = sbt {
+            if sbt.expiry >= block_timestamp() / 1_000_000_000 {
+                return Some(sbt);
+            }
+        }
+        None
+    }
 
     // IMPORTANT: make sure you check the public values such as actionId from this. Someone can forge a proof if you don't check the public values
     /// e.g., by using a different issuer or actionId
@@ -154,33 +164,53 @@ impl Contract {
         self.sbt_owners.remove(&(commitment, circuit_id));
     }
 
-    /// Returns true if the user has KYC SBT, otherwise panics with a message
-    pub fn has_gov_id_sbt(&self, owner: AccountId) -> bool {
-        let sbt = self.get_sbt(owner, [114,157,102,14,28,2,228,228,25,116,94,97,125,100,63,137,122,83,134,115,204,241,5,30,9,59,191,165,139,10,18,11]);
+    /// Returns true if the user has KYC SBT, otherwise returns false and doesn't panic
+    pub fn has_gov_id_sbt(&self, account_id: AccountId) -> bool {
+        // Checking manually instead of calling get_sbt so we can return false if it fails instead of panicking
+        let commitment = AccountCommitment::from_account_id(&account_id);
+        let sbt = self._get_sbt_no_panic(commitment, [114,157,102,14,28,2,228,228,25,116,94,97,125,100,63,137,122,83,134,115,204,241,5,30,9,59,191,165,139,10,18,11]);
+        if sbt.is_none() {
+            return false;
+        }
+        let sbt = sbt.unwrap();
+
         // Check the actionID is the default sybil resistant actionId of 123456789
-        require!(BigUint::from_bytes_be(&sbt.public_values[2]) == BigUint::from(123456789u32), "Invalid action ID");        // Check the issuer address is the Holonym government ID issuer
-        require!(sbt.public_values[4] == {
+        if BigUint::from_bytes_be(&sbt.public_values[2]) != BigUint::from(123456789u32) { return false }
+
+        // Check the issuer address is the Holonym government ID issuer
+        if sbt.public_values[4] != {
              #[cfg(not(test))]
              { hex!("03fae82f38bf01d9799d57fdda64fad4ac44e4c2c2f16c5bf8e1873d0a3e1993") }
              #[cfg(test)]
              { hex!("2a7c39f19fdaa01187b64b9aaba9ecd2af0c33603364d1c055926989ecd1995e") }
-        }, "Should be government ID issuer");
+        } {
+            return false
+        }
 
         true
     }
 
     /// Returns true if the user has a phone SBT, otherwise panics with a message
-    pub fn has_phone_sbt(&self, owner: AccountId) -> bool {
-        let sbt = self.get_sbt(owner, [188,224,82,207,114,61,202,6,162,27,211,207,131,139,197,24,147,23,48,251,61,183,133,159,201,204,134,240,213,72,52,149]);
+    pub fn has_phone_sbt(&self, account_id: AccountId) -> bool {
+        // Checking manually instead of calling get_sbt so we can return false if it fails instead of panicking
+        let commitment = AccountCommitment::from_account_id(&account_id);
+        let sbt = self._get_sbt_no_panic(commitment, [188,224,82,207,114,61,202,6,162,27,211,207,131,139,197,24,147,23,48,251,61,183,133,159,201,204,134,240,213,72,52,149]);
+        if sbt.is_none() {
+            return false;
+        }
+        let sbt = sbt.unwrap();
+
         // Check the actionID is the default sybil resistant actionId of 123456789
-        require!(BigUint::from_bytes_be(&sbt.public_values[2]) == BigUint::from(123456789u32), "Invalid action ID");
+        if BigUint::from_bytes_be(&sbt.public_values[2]) != BigUint::from(123456789u32) { return false }
         // Check the issuer address is the Holonym phone # issuer
-        require!(sbt.public_values[4] == {
+        if sbt.public_values[4] != {
             #[cfg(not(test))]
             { hex!("0040b8810cbaed9647b54d18cc98b720e1e8876be5d8e7089d3c079fc61c30a4") }
             #[cfg(test)]
             { hex!("14ed8557bbc818f70eeb3aa9196f7af073f23a0db59a7a844c26ff2ef8bc2e65") }
-        }, "Should be phone issuer");
+        } {
+            return false
+        }
         
         true
     }
@@ -224,7 +254,7 @@ mod tests {
         let server_response = serde_json::from_str::<Value>(
             "{\"values\":{\"circuit_id\":\"0xbce052cf723dca06a21bd3cf838bc518931730fb3db7859fc9cc86f0d5483495\",\"sbt_reciever\":\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"expiration\":\"0x67a4657e\",\"custom_fee\":\"0x00\",\"nullifier\":\"0x2f0a404cef1611163c85eba6f9979ac1e2951b7ea9a8a7ec2ef9aab8a0ca3884\",\"public_values\":[\"0x67a4657e\",\"0x2ac2f3e45e10577a30c15ee4ce893cfcd2542e26e1cb27fd674dce539b1df50c\",\"0x75bcd15\",\"0x2f0a404cef1611163c85eba6f9979ac1e2951b7ea9a8a7ec2ef9aab8a0ca3884\",\"0x14ed8557bbc818f70eeb3aa9196f7af073f23a0db59a7a844c26ff2ef8bc2e65\"],\"chain_id\":\"NEAR\"},\"sig\":\"0x186f5d385019dcba85a9d895d68de13734d01decf8e4958debad03bbd4e16875b83f74b3e6a874e784dfe9e72fe1f1386de98d8fa2f708dcfafa6fcc19c16108\"}"
         ).expect("Invalid JSON");
-        
+
         contract.set_sbt(
             hex::decode(server_response["values"]["circuit_id"].as_str().unwrap().replace("0x", "")).unwrap().try_into().unwrap(),
             // server_response["values"]["proof_ipfs_cid"].as_str().expect("Invalid proof_ipfs_cid").to_string(),
@@ -259,10 +289,9 @@ mod tests {
         let mut contract = Contract::default();
 
         // --- Phone ---- //
-        assert!(
-            std::panic::catch_unwind(||
-                contract.has_phone_sbt(AccountId::from_str("testaccount.testnet").unwrap())
-            ).is_err()
+        assert_eq!(
+            contract.has_phone_sbt(AccountId::from_str("testaccount.testnet").unwrap()),
+            false
         );
 
         let server_phone_response = serde_json::from_str::<Value>(
@@ -291,10 +320,9 @@ mod tests {
         
         // --- Government ID ---- //
         
-        assert!(
-            std::panic::catch_unwind(||
-                contract.has_gov_id_sbt(AccountId::from_str("testaccount.testnet").unwrap())
-            ).is_err()
+        assert_eq!(
+            contract.has_gov_id_sbt(AccountId::from_str("testaccount.testnet").unwrap()),
+            false
         );
 
         let server_gov_id_response = serde_json::from_str::<Value>(
